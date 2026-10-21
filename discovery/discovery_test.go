@@ -36,7 +36,6 @@ func TestDiscovery(t *testing.T) {
 }
 
 func setupNode(t *testing.T, nodes []*discovery.MemberlistDiscovery) ([]*discovery.MemberlistDiscovery, *handler) {
-	id := len(nodes)
 	addr := "127.0.0.1"
 	ports := dynaport.Get(1)
 	ctx := context.WithValue(context.Background(), "env", "TEST")
@@ -44,7 +43,6 @@ func setupNode(t *testing.T, nodes []*discovery.MemberlistDiscovery) ([]*discove
 	cfg := discovery.MemberlistConfig{
 		BindAddress: addr,
 		BindPort:    uint16(ports[0]),
-		Name:        fmt.Sprintf("%d", id),
 	}
 	h := &handler{}
 	if len(nodes) == 0 {
