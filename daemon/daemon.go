@@ -20,8 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"sync"
+
 	"github.com/duh-rpc/duh-go"
 	"github.com/kapetan-io/querator"
+	"github.com/kapetan-io/querator/discovery"
 	"github.com/kapetan-io/querator/internal"
 	"github.com/kapetan-io/querator/service"
 	"github.com/kapetan-io/querator/transport"
@@ -29,19 +35,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/net/netutil"
-	"log/slog"
-	"net"
-	"net/http"
-	"sync"
 )
 
 type Daemon struct {
-	service  *service.Service
-	client   *querator.Client
-	servers  []*http.Server
-	wg       sync.WaitGroup
-	Listener net.Listener
-	conf     Config
+	service   *service.Service
+	discovery discovery.Discovery
+	client    *querator.Client
+	servers   []*http.Server
+	wg        sync.WaitGroup
+	Listener  net.Listener
+	conf      Config
 }
 
 func NewDaemon(ctx context.Context, conf Config) (*Daemon, error) {
@@ -55,9 +58,11 @@ func NewDaemon(ctx context.Context, conf Config) (*Daemon, error) {
 	}
 
 	conf.Service.Log = conf.Service.Log.With("code.namespace", "Daemon")
+
 	d := &Daemon{
-		conf:    conf,
-		service: s,
+		conf:      conf,
+		discovery: conf.ServiceDiscovery.Discovery,
+		service:   s,
 	}
 	return d, d.Start(ctx)
 }
@@ -89,6 +94,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := d.discovery.Start(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -104,6 +112,9 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 		d.conf.Service.Log.Info("HTTP Server shutdown", "address", srv.Addr)
 	}
 	d.servers = nil
+	if err := d.discovery.LeaveCluster(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 

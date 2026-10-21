@@ -230,6 +230,13 @@ func TestApplyConfigFile(t *testing.T) {
 			Level:   "debug",
 			Handler: "json",
 		},
+		ServiceDiscovery: daemon.ServiceDiscovery{
+			Memberlist: &daemon.MemberlistConfig{
+				BindAddress:  "127.0.0.1",
+				BindPort:     2320,
+				InitialPeers: []string{"1.1.1.1"},
+			},
+		},
 		PartitionStorage: []daemon.PartitionStorage{
 			{
 				Name:     "mem-00",
@@ -265,6 +272,7 @@ func TestApplyConfigFile(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, true, conf.Service.Log.Handler().Enabled(ctx, slog.LevelDebug))
+	// TODO: add asserts for ServiceDiscovery here
 	assert.Len(t, conf.Service.StorageConfig.PartitionStorage, 1)
 	assert.Equal(t, "mem-00", conf.Service.StorageConfig.PartitionStorage[0].Name)
 	assert.Equal(t, float64(0), conf.Service.StorageConfig.PartitionStorage[0].Affinity)
@@ -288,6 +296,13 @@ func TestApplyConfigFile(t *testing.T) {
 
 func TestApplyConfigFromYAML(t *testing.T) {
 	validConfig := `
+service-discovery:
+  memberlist:
+    bind-address: "127.0.0.1"
+    bind-port: 2320
+    initial-peers:
+      - ""
+
 partition-storage:
   - name: mem-00
     memory: {}

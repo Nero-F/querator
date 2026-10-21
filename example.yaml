@@ -14,6 +14,14 @@ logging:
   # The logging level; options are 'info', 'warn', 'error', 'debug',
   level: info
 
+# Service Discovery defines which discovery mechansism is used
+service-discovery:
+  memberlist:
+    bind-address: "127.0.0.1"
+    bind-port: 2322
+    initial-peers:
+      - ""
+
 # Queue Storage defines where metadata about the queues is stored
 queue-storage:
   badger:

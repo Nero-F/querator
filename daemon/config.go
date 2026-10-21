@@ -11,6 +11,7 @@ import (
 
 	"github.com/duh-rpc/duh-go"
 	"github.com/kapetan-io/errors"
+	"github.com/kapetan-io/querator/discovery"
 	"github.com/kapetan-io/querator/internal"
 	"github.com/kapetan-io/querator/internal/store"
 	"github.com/kapetan-io/querator/internal/types"
@@ -25,6 +26,9 @@ import (
 type Config struct {
 	// Explicit composition instead of embedding
 	Service service.Config
+
+	// Discovery
+	ServiceDiscovery discovery.ServiceDiscovery
 
 	// TLS is the TLS config used for public server and clients
 	TLS *duh.TLSConfig
@@ -79,6 +83,12 @@ func (c *Config) SetDefaults() {
 			Affinity:       1,
 		},
 	})
+	set.Default(&c.ServiceDiscovery.Discovery, discovery.NewMemberlistDiscovery(discovery.MemberlistConfig{
+		Log:          c.Service.Log,
+		BindAddress:  "127.0.0.1",
+		BindPort:     2320,
+		InitialPeers: []string{},
+	}))
 
 	// Default to NoOp auth (open access for internal deployments)
 	set.Default(&c.AuthBackend, auth.AuthBackend(&auth.NoOpAuthBackend{}))
@@ -94,6 +104,7 @@ func (c *Config) SetDefaults() {
 type File struct {
 	Address          string             `yaml:"address"`
 	Logging          Logging            `yaml:"logging"`
+	ServiceDiscovery ServiceDiscovery   `yaml:"service-discovery"`
 	PartitionStorage []PartitionStorage `yaml:"partition-storage"`
 	QueueStorage     QueueStorage       `yaml:"queue-storage"`
 	AuthBackend      AuthConfig         `yaml:"auth-backend"`
@@ -108,6 +119,16 @@ type AuthConfig struct {
 type Logging struct {
 	Level   string `yaml:"level"`
 	Handler string `yaml:"handler"`
+}
+
+type ServiceDiscovery struct {
+	Memberlist *MemberlistConfig `yaml:"memberlist"`
+}
+
+type MemberlistConfig struct {
+	InitialPeers []string `yaml:"initial-peers"`
+	BindAddress  string   `yaml:"bind-address"`
+	BindPort     uint16   `yaml:"bind-port"`
 }
 
 // QueueStorage selects the backend that stores queue metadata. Exactly one backend section
@@ -210,6 +231,10 @@ func ApplyConfigFile(ctx context.Context, conf *Config, file File, w io.Writer) 
 		return err
 	}
 
+	if err := setupServiceDiscovery(file, conf); err != nil {
+		return err
+	}
+
 	if err := setupPartitionStorage(file, conf); err != nil {
 		return err
 	}
@@ -275,20 +300,14 @@ func toLogLevel(level string) slog.Level {
 	}
 }
 
-// selected reports the name of the single backend that is set and how many are set, so callers can
+// selected reports the name of the single element (backend, driver) that is set and how many are set, so callers can
 // enforce the "exactly one backend" rule with a clear error.
-func selected(memory, badger, mongo, postgres bool) (name string, count int) {
-	if memory {
-		name, count = "memory", count+1
-	}
-	if badger {
-		name, count = "badger", count+1
-	}
-	if mongo {
-		name, count = "mongo", count+1
-	}
-	if postgres {
-		name, count = "postgres", count+1
+func selected(elements map[string]bool) (name string, count int) {
+	for k, v := range elements {
+		if v == true {
+			count += 1
+			name = k
+		}
 	}
 	return name, count
 }
@@ -302,7 +321,13 @@ func backendErr(what string, count int) error {
 
 func setupPartitionStorage(file File, d *Config) error {
 	for _, ps := range file.PartitionStorage {
-		name, count := selected(ps.Memory != nil, ps.Badger != nil, ps.Mongo != nil, ps.Postgres != nil)
+		backends := map[string]bool{
+			"memory":   ps.Memory != nil,
+			"badger":   ps.Badger != nil,
+			"mongo":    ps.Mongo != nil,
+			"postgres": ps.Postgres != nil,
+		}
+		name, count := selected(backends)
 		if count != 1 {
 			return backendErr(fmt.Sprintf("partition storage '%s'", ps.Name), count)
 		}
@@ -354,7 +379,14 @@ func setupPartitionStorage(file File, d *Config) error {
 
 func setupQueueStorage(ctx context.Context, file File, conf *Config) error {
 	qs := file.QueueStorage
-	name, count := selected(qs.Memory != nil, qs.Badger != nil, qs.Mongo != nil, qs.Postgres != nil)
+
+	backends := map[string]bool{
+		"memory":   qs.Memory != nil,
+		"badger":   qs.Badger != nil,
+		"mongo":    qs.Mongo != nil,
+		"postgres": qs.Postgres != nil,
+	}
+	name, count := selected(backends)
 	if count > 1 {
 		return backendErr("queue storage", count)
 	}
@@ -429,6 +461,26 @@ func setupAuthBackend(file File, conf *Config) error {
 	default:
 		return fmt.Errorf("invalid auth-backend driver; '%s' is not one of (none, internal)",
 			file.AuthBackend.Driver)
+	}
+	return nil
+}
+
+func setupServiceDiscovery(file File, conf *Config) error {
+	sd := file.ServiceDiscovery
+
+	drivers := map[string]bool{
+		"memberlist": sd.Memberlist != nil,
+	}
+	name, _ := selected(drivers)
+
+	if name == "memberlist" {
+		conf.ServiceDiscovery.Discovery = discovery.NewMemberlistDiscovery(discovery.MemberlistConfig{
+			BindAddress:  sd.Memberlist.BindAddress,
+			BindPort:     sd.Memberlist.BindPort,
+			InitialPeers: sd.Memberlist.InitialPeers,
+			Log:          conf.Service.Log,
+		})
+
 	}
 	return nil
 }
